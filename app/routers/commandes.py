@@ -1,92 +1,54 @@
-from pydantic import BaseModel, Field, EmailStr
-from typing import Optional, List
-from datetime import datetime
-from enum import Enum
+from fastapi import APIRouter, HTTPException, Depends, Query
+from typing import Optional
+from app.schemas.commandes import (
+    CommandeCreate, CommandeUpdate, CommandeOut,
+    PaginatedCommandes, StatutCommande,
+)
+from app.services.commandes_service import (
+    create_commande, list_commandes, get_commande,
+    get_commande_by_numero, update_commande_statut, get_stats,
+)
+from app.core.security import require_admin
 
+router = APIRouter(tags=["Commandes"])
 
-# ─── STATUT COMMANDE ──────────────────────────────────────────
-class StatutCommande(str, Enum):
-    en_attente = "en_attente"
-    confirmee = "confirmee"
-    en_preparation = "en_preparation"
-    expediee = "expediee"
-    livree = "livree"
-    annulee = "annulee"
+@router.post("/commandes", response_model=CommandeOut)
+async def passer_commande(data: CommandeCreate):
+    try:
+        return await create_commande(data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
+@router.get("/commandes/suivi/{numero}", response_model=CommandeOut)
+async def suivre_commande(numero: str):
+    c = await get_commande_by_numero(numero.upper())
+    if not c:
+        raise HTTPException(404, "Commande introuvable")
+    return c
 
-class ModePaiement(str, Enum):
-    orange_money = "orange_money"
-    wave = "wave"
-    moov = "moov"
-    carte = "carte"
-    especes = "especes"
+@router.get("/commandes/stats")
+async def dashboard_stats(_=Depends(require_admin)):
+    return await get_stats()
 
+@router.get("/commandes", response_model=PaginatedCommandes)
+async def list_cmd(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    statut: Optional[StatutCommande] = None,
+    search: Optional[str] = None,
+    _=Depends(require_admin),
+):
+    return await list_commandes(page, per_page, statut, search)
 
-# ─── LIGNE DE PANIER ──────────────────────────────────────────
-class LigneBase(BaseModel):
-    produit_id: str
-    quantite: int = Field(..., ge=1, le=100)
-    taille: Optional[str] = None
-    couleur: Optional[str] = None
+@router.get("/commandes/{commande_id}", response_model=CommandeOut)
+async def get_cmd(commande_id: str, _=Depends(require_admin)):
+    c = await get_commande(commande_id)
+    if not c:
+        raise HTTPException(404, "Commande introuvable")
+    return c
 
-
-class LigneOut(LigneBase):
-    id: str
-    prix_unitaire: float
-    sous_total: float
-    produit_nom: str
-    produit_image: Optional[str] = None
-
-
-# ─── CLIENT INFO ──────────────────────────────────────────────
-class ClientInfo(BaseModel):
-    nom: str = Field(..., min_length=2, max_length=100)
-    prenom: str = Field(..., min_length=2, max_length=100)
-    telephone: str = Field(..., min_length=8, max_length=20)
-    email: Optional[str] = None
-    adresse: str = Field(..., min_length=5)
-    ville: str = Field(..., min_length=2)
-    commune: Optional[str] = None
-    instructions: Optional[str] = None
-
-
-# ─── COMMANDE ─────────────────────────────────────────────────
-class CommandeCreate(BaseModel):
-    client: ClientInfo
-    lignes: List[LigneBase] = Field(..., min_length=1)
-    mode_paiement: ModePaiement
-    notes: Optional[str] = None
-
-
-class CommandeUpdate(BaseModel):
-    statut: Optional[StatutCommande] = None
-    notes_admin: Optional[str] = None
-    numero_suivi: Optional[str] = None
-
-
-class CommandeOut(BaseModel):
-    id: str
-    numero: str                    # ex: RN-2025-0042
-    client: ClientInfo
-    lignes: List[LigneOut]
-    sous_total: float
-    frais_livraison: float
-    total: float
-    statut: StatutCommande
-    mode_paiement: ModePaiement
-    notes: Optional[str] = None
-    notes_admin: Optional[str] = None
-    numero_suivi: Optional[str] = None
-    created_at: datetime
-    updated_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
-class PaginatedCommandes(BaseModel):
-    items: List[CommandeOut]
-    total: int
-    page: int
-    per_page: int
-    pages: int
+@router.patch("/commandes/{commande_id}", response_model=CommandeOut)
+async def update_cmd(commande_id: str, data: CommandeUpdate, _=Depends(require_admin)):
+    return await update_commande_statut(commande_id, data)

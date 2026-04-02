@@ -1,97 +1,75 @@
-from pydantic import BaseModel, Field, HttpUrl
-from typing import Optional, List
-from datetime import datetime
-from enum import Enum
+from fastapi import APIRouter, HTTPException, Depends, Query
+from typing import Optional
+from app.schemas.produits import (
+    ProduitCreate, ProduitUpdate, ProduitOut, PaginatedProduits,
+    CategorieCreate, CategorieUpdate, CategorieOut,
+)
+from app.services.produits_service import (
+    list_categories, get_categorie, create_categorie, update_categorie, delete_categorie,
+    list_produits, get_produit, get_produit_by_slug, create_produit, update_produit, delete_produit,
+)
+from app.core.security import require_admin
 
+router = APIRouter(tags=["Produits"])
 
-# ─── CATÉGORIE ────────────────────────────────────────────────
-class CategorieBase(BaseModel):
-    nom: str = Field(..., min_length=2, max_length=100)
-    slug: str = Field(..., min_length=2, max_length=100)
-    description: Optional[str] = None
-    image_url: Optional[str] = None
-    ordre: int = 0
-    active: bool = True
+@router.get("/categories", response_model=list[CategorieOut])
+async def get_categories(active_only: bool = True):
+    return await list_categories(active_only)
 
+@router.get("/categories/{categorie_id}", response_model=CategorieOut)
+async def get_cat(categorie_id: str):
+    cat = await get_categorie(categorie_id)
+    if not cat:
+        raise HTTPException(404, "Catégorie introuvable")
+    return cat
 
-class CategorieCreate(CategorieBase):
-    pass
+@router.post("/categories", response_model=CategorieOut)
+async def create_cat(data: CategorieCreate, _=Depends(require_admin)):
+    return await create_categorie(data)
 
+@router.patch("/categories/{categorie_id}", response_model=CategorieOut)
+async def update_cat(categorie_id: str, data: CategorieUpdate, _=Depends(require_admin)):
+    return await update_categorie(categorie_id, data)
 
-class CategorieUpdate(BaseModel):
-    nom: Optional[str] = None
-    description: Optional[str] = None
-    image_url: Optional[str] = None
-    ordre: Optional[int] = None
-    active: Optional[bool] = None
+@router.delete("/categories/{categorie_id}")
+async def delete_cat(categorie_id: str, _=Depends(require_admin)):
+    await delete_categorie(categorie_id)
+    return {"message": "Catégorie supprimée"}
 
+@router.get("/produits", response_model=PaginatedProduits)
+async def get_produits(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(12, ge=1, le=50),
+    categorie_id: Optional[str] = None,
+    tissu: Optional[str] = None,
+    search: Optional[str] = None,
+    actif_only: bool = True,
+):
+    return await list_produits(page, per_page, categorie_id, tissu, search, actif_only)
 
-class CategorieOut(CategorieBase):
-    id: str
-    created_at: datetime
-    nb_produits: Optional[int] = 0
+@router.get("/produits/slug/{slug}", response_model=ProduitOut)
+async def get_by_slug(slug: str):
+    p = await get_produit_by_slug(slug)
+    if not p:
+        raise HTTPException(404, "Produit introuvable")
+    return p
 
-    class Config:
-        from_attributes = True
+@router.get("/produits/{produit_id}", response_model=ProduitOut)
+async def get_prod(produit_id: str):
+    p = await get_produit(produit_id)
+    if not p:
+        raise HTTPException(404, "Produit introuvable")
+    return p
 
+@router.post("/produits", response_model=ProduitOut)
+async def create_prod(data: ProduitCreate, _=Depends(require_admin)):
+    return await create_produit(data)
 
-# ─── PRODUIT ──────────────────────────────────────────────────
-class TissuEnum(str, Enum):
-    wax = "wax"
-    bazin = "bazin"
-    kente = "kente"
-    bogolan = "bogolan"
-    dentelle = "dentelle"
-    autre = "autre"
+@router.patch("/produits/{produit_id}", response_model=ProduitOut)
+async def update_prod(produit_id: str, data: ProduitUpdate, _=Depends(require_admin)):
+    return await update_produit(produit_id, data)
 
-
-class ProduitBase(BaseModel):
-    nom: str = Field(..., min_length=2, max_length=200)
-    slug: str = Field(..., min_length=2, max_length=200)
-    description: Optional[str] = None
-    prix: float = Field(..., gt=0)
-    prix_promo: Optional[float] = Field(None, gt=0)
-    tissu: TissuEnum = TissuEnum.wax
-    categorie_id: str
-    stock: int = Field(default=0, ge=0)
-    images: List[str] = []       # liste d'URLs Supabase Storage
-    badge: Optional[str] = None  # "Nouveau", "Bestseller", "Édition limitée"
-    actif: bool = True
-    sur_mesure: bool = False
-
-
-class ProduitCreate(ProduitBase):
-    pass
-
-
-class ProduitUpdate(BaseModel):
-    nom: Optional[str] = None
-    description: Optional[str] = None
-    prix: Optional[float] = None
-    prix_promo: Optional[float] = None
-    tissu: Optional[TissuEnum] = None
-    categorie_id: Optional[str] = None
-    stock: Optional[int] = None
-    images: Optional[List[str]] = None
-    badge: Optional[str] = None
-    actif: Optional[bool] = None
-    sur_mesure: Optional[bool] = None
-
-
-class ProduitOut(ProduitBase):
-    id: str
-    created_at: datetime
-    updated_at: datetime
-    categorie: Optional[CategorieOut] = None
-
-    class Config:
-        from_attributes = True
-
-
-# ─── PAGINATION ───────────────────────────────────────────────
-class PaginatedProduits(BaseModel):
-    items: List[ProduitOut]
-    total: int
-    page: int
-    per_page: int
-    pages: int
+@router.delete("/produits/{produit_id}")
+async def delete_prod(produit_id: str, _=Depends(require_admin)):
+    await delete_produit(produit_id)
+    return {"message": "Produit archivé"}
